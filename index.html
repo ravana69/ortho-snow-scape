@@ -1,0 +1,533 @@
+<!DOCTYPE HTML>
+<html lang="en">
+  
+<!-- Mirrored from rsms.me/projects/ortho-snow-scape/ by HTTrack Website Copier/3.x [XR&CO'2014], Fri, 14 Oct 2022 09:48:39 GMT -->
+<!-- Added by HTTrack --><meta http-equiv="content-type" content="text/html;charset=utf-8" /><!-- /Added by HTTrack -->
+<head>
+    <meta charset="utf-8">
+    <title>Snow scape</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style type="text/css">
+body {
+  background: #33333e;
+  position: fixed;
+  overflow: hidden;
+}
+    </style>
+    <link rel="stylesheet" href="r/style.css">
+  </head>
+  <body>
+    <!-- <script src="r/autoreload.js"></script> -->
+    <!-- <script src="r/three.js"></script> -->
+    <script src="r/three.min.js"></script>
+    <script src="r/controls/OrbitControls.js"></script>
+    <script src="r/ParametricGeometries.js"></script>
+    <script src="r/controls/PointerLockControls.js"></script>
+    <script src="r/objects/Reflector.js"></script>
+    <script src="r/objects/Sky2.js"></script>
+    <script src="r/Detector.js"></script>
+    <script>
+
+if (!Detector.webgl) {
+  Detector.addGetWebGLMessage()
+}
+
+let camera, controls, scene, renderer, sunLight, ambientLight, sky
+
+let moveLeft, moveForward, moveBackward, moveRight;
+
+let velocity = new THREE.Vector3()
+let clock = new THREE.Clock()
+
+const frustumSize = 500
+
+let cameraType = 'perspective' // perspective | ortho
+cameraType = 'ortho'
+
+let controlType = 'fp-pl' // fp-pl | orbit | fp
+controlType = 'orbit'
+// controlType = 'fp'
+
+let enableShadows = true
+
+// ambient light
+const ambientPeakIntensity = 2.5
+const ambientBackgroundIntensity = 0.1
+const ambientMinY = 0.3
+  // adjust zero of ambient light to this y value.
+  // e.g. if ambientMinY=0.5 and y<=0.5 then k=0
+
+// sun variables
+let sunLightDist = 700
+let inclination = -0.55
+let azimuth = 0.3 // .25 = straight, as if we are at equator
+
+// nightLength -- length of night
+// 1 = same length as day, 0 = no night.
+const nightLength = 0.3
+const dayCycleSpeed = 0.01 // 0.005
+
+
+function init() {
+
+  scene = new THREE.Scene()
+  scene.background = new THREE.Color(0x33333e)
+  if (cameraType == 'perspective') {
+    scene.fog = new THREE.Fog(scene.background, 100, 1000)
+    // scene.fog = new THREE.FogExp2(scene.background, 0.002)
+  }
+
+
+  renderer = new THREE.WebGLRenderer({
+    antialias: true, // slow but lines become more readable
+    powerPreference: 'high-performance',
+  })
+  renderer.setPixelRatio(window.devicePixelRatio)
+  renderer.setSize(window.innerWidth, window.innerHeight)
+  renderer.gammaInput = true
+  renderer.gammaOutput = true
+
+  renderer.physicallyCorrectLights = true
+  renderer.toneMapping = THREE.Uncharted2ToneMapping
+  // renderer.toneMapping = THREE.ReinhardToneMapping
+
+  if (enableShadows) {
+    renderer.shadowMap.enabled = true
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap
+  }
+
+
+  if (cameraType == 'perspective') {
+    camera = new THREE.PerspectiveCamera(
+      60, // fov
+      window.innerWidth / window.innerHeight,
+      1,  // near
+      1000 // far
+    )
+  } else {
+    let aspectRatio = window.innerWidth / window.innerHeight
+    camera = new THREE.OrthographicCamera(
+      frustumSize * aspectRatio / - 2,
+      frustumSize * aspectRatio / 2,
+      frustumSize / 2,
+      frustumSize / - 2,
+      -frustumSize,
+      2000
+    )
+    camera.position.y = 800
+    camera.position.x = Math.cos(Math.PI * 0.75) * 800
+    camera.position.z = Math.sin(Math.PI * 0.75) * 800
+    camera.lookAt(scene.position)
+  }
+
+
+  if (controlType == 'orbit') {
+    controls = new THREE.OrbitControls(camera, renderer.domElement)
+    controls.enableDamping = true
+    controls.autoRotate = true
+    controls.autoRotateSpeed = 0.03
+      // animation loop required when damping or auto-rotation are enabled
+    controls.dampingFactor = 0.25
+    controls.rotateSpeed = 0.4
+    // controls.keyPanSpeed = 20
+    // controls.panSpeed = 0.001
+    // controls.panningMode = THREE.HorizontalPanning
+    controls.panningMode = THREE.ScreenSpacePanning
+      // default is THREE.ScreenSpacePanning
+    controls.minDistance = 100
+    controls.maxDistance = 500
+    controls.maxPolarAngle = Math.PI / 2 // not above horizon
+    // controls.addEventListener('change', render)
+      // call this only in static scenes (i.e., if there is no animation loop)
+  } else if (controlType == 'fp') {
+    controls = new THREE.FirstPersonControls(camera)
+    controls.lookSpeed = 0.0125
+    controls.movementSpeed = 500
+    controls.noFly = false
+    controls.lookVertical = true
+    controls.constrainVertical = true
+    controls.verticalMin = 1.5
+    controls.verticalMax = 2.0
+    controls.lon = 250
+    controls.lat = 30
+  } else {
+    controls = new THREE.PointerLockControls(camera)
+    let ctrobj = controls.getObject()
+    scene.add(ctrobj)
+    ctrobj.translateX(-200)
+    ctrobj.translateY(100) // must be >= camera.near
+    ctrobj.translateZ(200)
+    ctrobj.rotation.y = -Math.PI / 2  // look north
+  }
+
+
+  sky = new THREE.Sky()
+  sky.scale.setScalar(frustumSize * 2)
+  var uniforms = sky.material.uniforms
+  uniforms.turbidity.value = 10 // 10
+  uniforms.rayleigh.value = 3.7 // 2.0
+  uniforms.luminance.value = 1 // 1
+  uniforms.mieCoefficient.value = 0.02 // 0.005
+  uniforms.mieDirectionalG.value = 0.5 // 0.5
+  scene.add(sky)
+
+
+  let ground = new THREE.Mesh(
+    new THREE.PlaneBufferGeometry(1024, 1024),
+    new THREE.MeshStandardMaterial({
+      color: 0xeeeeee,
+      roughness: 0.6,
+      metalness: 0,
+      // emissive: 0x101014,
+    })
+    // new THREE.MeshLambertMaterial({ color: scene.background })
+  )
+  ground.rotation.x = -Math.PI / 2
+  ground.position.y = 0.2
+  ground.material.transparent = true
+  ground.material.opacity = 0.7
+  ground.receiveShadow = enableShadows
+  ground.castShadow = enableShadows
+  scene.add(ground)
+
+
+  let groundMirror = new THREE.Reflector(
+    // new THREE.CircleBufferGeometry( 40, 64 ),
+    new THREE.PlaneBufferGeometry(1024, 1024),
+    {
+      clipBias: 0.003,
+      textureWidth: window.innerWidth * window.devicePixelRatio,
+      textureHeight: window.innerHeight * window.devicePixelRatio,
+      color: 0x777777,
+      recursion: 1
+    }
+  )
+  groundMirror.position.y = 0.1
+  groundMirror.rotateX(-Math.PI / 2)
+  scene.add(groundMirror)
+
+
+  let treeGeos = new Array(20)
+  for (let i = 0; i < treeGeos.length; i++) {
+    let treeGeo = new THREE.CylinderGeometry(
+      0,  // radiusTop
+      5 + Math.round(Math.random() * 15), // radiusBottom
+      10 + Math.round(Math.random() * 50), // height
+      6,  // radialSegments
+      1,  // heightSegments
+      // true, // openEnded
+      // 0, // thetaStart
+      // 1, // thetaLength
+    )
+    treeGeos[i] = treeGeo
+  }
+
+  let mat1 = new THREE.MeshPhongMaterial({
+    color: 0xffffff,
+    flatShading: true,
+    // specular: 0x050505,
+    shininess: 0,
+    // emissive: 0x010101,
+    // morphTargets: true,
+    // vertexColors: THREE.FaceColors,
+  })
+
+  const area = 1024
+
+  for (let i = 0; i < 300; i++) {
+    let geo = treeGeos[Math.round(Math.random() * (treeGeos.length - 1))]
+    let mesh = new THREE.Mesh(geo, mat1)
+    mesh.position.x = Math.random() * area - area/2
+    mesh.position.y = Math.floor(geo.parameters.height / 2)
+    mesh.position.z = Math.random() * area - area/2
+    mesh.updateMatrix()
+    mesh.matrixAutoUpdate = false
+    mesh.castShadow = enableShadows
+    mesh.receiveShadow = enableShadows
+    scene.add(mesh)
+  }
+
+
+  // sunlight
+  sunLight = new THREE.DirectionalLight(0xffeedd, 1)
+  sunLight.color.setHSL(0.1, 1, 0.7)
+  sunLight.position.multiplyScalar(sunLightDist)
+  if (enableShadows) {
+    sunLight.castShadow = true
+    sunLight.shadow.mapSize.width = 2048
+    sunLight.shadow.mapSize.height = 2048
+    var d = frustumSize
+    sunLight.shadow.camera.fov = 70
+    sunLight.shadow.camera.left = -d
+    sunLight.shadow.camera.right = d
+    sunLight.shadow.camera.top = d
+    sunLight.shadow.camera.bottom = -d
+    sunLight.shadow.camera.near = 1
+    sunLight.shadow.camera.far = sunLightDist * 2
+    sunLight.shadow.bias = 0
+    sunLight.target = ground
+  }
+  scene.add(sunLight)
+  // scene.add(new THREE.DirectionalLightHelper(sunLight, 10))
+
+  // sunLight.position.set(200, 10, 0)
+
+
+  let light
+
+  // light = new THREE.DirectionalLight(0x111111)
+  // light.position.set(1, 1, 1)
+  // scene.add(light)
+
+  light = new THREE.DirectionalLight(0x223344)
+  light.position.set(-1, -1, -1)
+  scene.add(light)
+
+  ambientLight = new THREE.AmbientLight(0xeeeeff)
+  ambientLight.intensity = 0.1
+  scene.add(ambientLight)
+
+
+  // var helper = new THREE.GridHelper(distance, 64, 0xffffff, 0xffffff)
+  var helper = new THREE.GridHelper(1024, 32, 0x606060, 0x606060)
+  helper.position.y = 0.3 // lift up just slighlty from floor
+  helper.material.transparent = true
+  helper.material.opacity = 0.1
+  scene.add(helper)
+
+  // var helper2 = new THREE.PolarGridHelper(
+  //   600, // radius
+  //   16, // radials
+  //   3, // circles
+  //   128, // divisions
+  //   0xff00ff, // color1
+  //   0xff00ff, // color2
+  // )
+  // helper2.position.y = 0.2 // lift up just slighlty from ground
+  // scene.add(helper2)
+
+
+  document.body.appendChild(renderer.domElement)
+  initEventHandlers()
+}
+
+
+function initEventHandlers() {
+  // pointer lock control
+  let element = document.body
+
+  window.addEventListener('resize', onWindowResize, false)
+
+  if (controlType == 'fp-pl') {
+    function hasPointerLock() {
+      return (
+        document.pointerLockElement === element ||
+        document.mozPointerLockElement === element ||
+        document.webkitPointerLockElement === element
+      )
+    }
+
+    let pointerlockchange = function (event) {
+      if (hasPointerLock()) {
+        controls.enabled = true
+      } else {
+        controls.enabled = false
+      }
+    }
+
+    let pointerlockerror = (ev) => {}
+
+    document.addEventListener( 'pointerlockchange', pointerlockchange, false );
+    document.addEventListener( 'mozpointerlockchange', pointerlockchange, false );
+    document.addEventListener( 'webkitpointerlockchange', pointerlockchange, false );
+    document.addEventListener( 'pointerlockerror', pointerlockerror, false );
+    document.addEventListener( 'mozpointerlockerror', pointerlockerror, false );
+    document.addEventListener( 'webkitpointerlockerror', pointerlockerror, false );
+    element.addEventListener('pointerdown', ev => {
+      if (hasPointerLock()) {
+        document.exitPointerLock()
+      } else {
+        element.requestPointerLock = (
+          element.requestPointerLock ||
+          element.mozRequestPointerLock ||
+          element.webkitRequestPointerLock
+        )
+        element.requestPointerLock()
+      }
+    })
+  }
+
+  function onKeyDown( event ) {
+    switch ( event.keyCode ) {
+      // case 38: // up
+      case 87: // w
+        moveForward = true;
+        break;
+      // case 37: // left
+      case 65: // a
+        moveLeft = true;
+        break;
+      // case 40: // down
+      case 83: // s
+        moveBackward = true;
+        break;
+      // case 39: // right
+      case 68: // d
+        moveRight = true;
+        break;
+    }
+  }
+
+  function onKeyUp( event ) {
+    switch ( event.keyCode ) {
+      // case 38: // up
+      case 87: // w
+        moveForward = false;
+        break;
+      // case 37: // left
+      case 65: // a
+        moveLeft = false;
+        break;
+      // case 40: // down
+      case 83: // s
+        moveBackward = false;
+        break;
+      // case 39: // right
+      case 68: // d
+        moveRight = false;
+        break;
+    }
+  }
+  document.addEventListener( 'keydown', onKeyDown, false );
+  document.addEventListener( 'keyup', onKeyUp, false );
+}
+
+
+function onWindowResize() {
+  if (cameraType == 'perspective') {
+    camera.aspect = window.innerWidth / window.innerHeight
+  } else {
+    let aspect = window.innerWidth / window.innerHeight
+    camera.left   = - frustumSize * aspect / 2
+    camera.right  =   frustumSize * aspect / 2
+    camera.top    =   frustumSize / 2
+    camera.bottom = - frustumSize / 2
+  }
+
+  camera.updateProjectionMatrix()
+
+  renderer.setSize(window.innerWidth, window.innerHeight)
+}
+
+
+function updateCamera(delta) {
+  const scale = 2000 // 1400
+  const friction = 5 // (0-inf) -- a really low number makes you fly/glide
+
+  velocity.x -= velocity.x * friction * delta
+  velocity.z -= velocity.z * friction * delta
+  velocity.y -= velocity.y * friction * delta
+  // const mass = 100.0
+  // velocity.y -= 9.8 * mass * delta
+
+  // if (moveForward)  { velocity.z -= scale * delta }
+  // if (moveBackward) { velocity.z += scale * delta }
+
+  if (moveForward)  { velocity.y -= scale * delta }
+  if (moveBackward) { velocity.y += scale * delta }
+
+  if (moveLeft)     { velocity.x -= scale * delta }
+  if (moveRight)    { velocity.x += scale * delta }
+
+  if (controlType == 'fp-pl') {
+    let ctrlobj = controls.getObject()
+    ctrlobj.translateX(velocity.x * delta)
+    ctrlobj.translateZ(velocity.z * delta)
+    // ctrlobj.translateY(velocity.y * delta)
+  } else {
+    camera.translateX(velocity.x * delta)
+    camera.translateZ(velocity.z * delta)
+    camera.translateY(velocity.y * delta)
+    camera.lookAt(scene.position)
+    controls.update()
+      // only required if controls.enableDamping = true,
+      // or if controls.autoRotate = true
+  }
+
+  // var timer = Date.now() * 0.0001;
+  // camera.position.y = 800
+  // camera.position.x = Math.cos(timer) * 800
+  // camera.position.z = Math.sin(timer) * 800
+  // console.log(Math.cos(timer), Math.sin(timer))
+}
+
+
+function update(delta) {
+  // inclination:
+  // -0.5 sunrise, 0 = noon, 0.5 sunset, 1 = midnight
+  //
+  if (inclination >= 0.5 + (0.5 * nightLength)) {
+    inclination = -(0.5 + (0.5 * nightLength))
+  }
+  inclination += delta * dayCycleSpeed
+
+  let theta = Math.PI * (inclination - 0.5)
+  let phi = 2 * Math.PI * (azimuth - 0.5)
+
+  let x = Math.cos( phi )
+  let y = Math.sin( phi ) * Math.sin( theta )
+  let z = Math.sin( phi ) * Math.cos( theta )
+
+  // uniforms.sunPosition.value.x = distance * x
+  // uniforms.sunPosition.value.y = distance * y
+  // uniforms.sunPosition.value.z = distance * z
+
+  // y is the height of the sun and goes like this:
+  //   0 at sunrise -> 1 noon -> 0 at sunset -> -1 midnight ->
+  sunLight.color.setHSL(0.1 + (-0.1 * (1-y)), 1-y, y)
+  sunLight.position.set(x * sunLightDist, y * sunLightDist, z * sunLightDist)
+
+  let k = y
+  // k = Math.pow(Math.E, y) * 0.5
+  // k = y * Math.E
+  k = ambientBackgroundIntensity + Math.max(
+    0,
+    (y - ambientMinY) * (ambientPeakIntensity - ambientBackgroundIntensity)
+  )
+  ambientLight.intensity = k
+  // console.log(y.toFixed(3), k.toFixed(3))
+
+  // pointLight.position.set(x * dlightDist, y * dlightDist, z * dlightDist)
+
+
+  let skyUniforms = sky.material.uniforms
+  skyUniforms.sunPosition.value.x = sunLightDist * x
+  skyUniforms.sunPosition.value.y = sunLightDist * y
+  skyUniforms.sunPosition.value.z = sunLightDist * z
+
+
+  updateCamera(delta)
+}
+
+
+function render() {
+  renderer.render(scene, camera)
+}
+
+
+function animate() {
+  requestAnimationFrame(animate)
+  let delta = clock.getDelta()
+  update(delta)
+  render()
+}
+
+init()
+// update(0);render()
+animate()
+
+    </script>
+  </body>
+
+<!-- Mirrored from rsms.me/projects/ortho-snow-scape/ by HTTrack Website Copier/3.x [XR&CO'2014], Fri, 14 Oct 2022 09:48:42 GMT -->
+</html>
